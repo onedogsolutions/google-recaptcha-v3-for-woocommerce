@@ -91,6 +91,9 @@ class Recaptcha_Woo_Admin {
 		$initial_settings = array(
 			'site_key'               => get_option( 'recaptcha_woo_site_key', '' ),
 			'secret_key'             => get_option( 'recaptcha_woo_secret_key', '' ),
+			'key_type'               => get_option( 'recaptcha_woo_key_type', 'classic' ),
+			'gcp_project_id'         => get_option( 'recaptcha_woo_gcp_project_id', '' ),
+			'gcp_api_key'            => get_option( 'recaptcha_woo_gcp_api_key', '' ),
 			'enable_login'           => get_option( 'recaptcha_woo_enable_login', '0' ),
 			'enable_registration'    => get_option( 'recaptcha_woo_enable_registration', '0' ),
 			'enable_checkout'        => get_option( 'recaptcha_woo_enable_checkout', '0' ),

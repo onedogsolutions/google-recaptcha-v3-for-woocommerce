@@ -1,6 +1,6 @@
 {
   "name": "google-recaptcha-v3-for-woocommerce",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Google reCAPTCHA v3 integration for WooCommerce with smart key scavenging.",
   "main": "build/index.js",
   "scripts": {

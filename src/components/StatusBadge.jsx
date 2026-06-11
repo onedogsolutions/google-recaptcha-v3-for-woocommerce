@@ -1,8 +1,11 @@
 import { __ } from '@wordpress/i18n';
 
-export default function StatusBadge( { siteKey, secretKey } ) {
-	const hasSite = !! siteKey;
-	const hasSecret = !! secretKey;
+export default function StatusBadge( { settings } ) {
+	const hasSite = !! settings.site_key;
+	const hasSecret =
+		settings.key_type === 'enterprise'
+			? !! settings.gcp_project_id && !! settings.gcp_api_key
+			: !! settings.secret_key;
 
 	let label = __( 'Inactive', 'google-recaptcha-v3-for-woocommerce' );
 	let badgeClass = 'bg-red-50 text-red-700 ring-red-600/10';

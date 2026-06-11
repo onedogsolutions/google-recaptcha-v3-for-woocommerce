@@ -20,6 +20,9 @@
 - Optimized the database key scavenger flow: replaced the automatic, on-load database scanning query with an explicit user-triggered manual scan (`POST /recaptcha-woo/v1/scan-keys`).
 - Added check for `fluentform_settings` option within the key scavenger logic.
 - Introduced interactive frontend states (`isScanning`, `scanPerformed`, `discoveredData`) with user controls styled using Tailwind v4.
+- Reworked frontend token handling (v1.1.0): tokens are pre-fetched on page load and refreshed before the two-minute expiry, on `updated_checkout`, on `checkout_error`, and on tab refocus, so gateway-driven submissions (Stripe UPE, PayPal PPCP) always carry a valid token. Inline JS now attaches via `wp_add_inline_script` so it is never duplicated inside AJAX checkout fragments.
+- Added reCAPTCHA Enterprise support (v1.1.0): new `key_type`, `gcp_project_id`, and `gcp_api_key` settings; frontend loads `enterprise.js` and uses `grecaptcha.enterprise`; verifier creates assessments via `recaptchaenterprise.googleapis.com` with expected-action checking.
+- Hardened verification failure modes (v1.1.0): credential misconfiguration (invalid secret, bad API key/project) logs a warning to the WooCommerce logger and fails open instead of blocking customers; expired/duplicate tokens return a dedicated "verification expired" message.
 
 ### Files Created/Modified
 - [x] [.gitignore](file:///Users/rwaterbury/Developer/google-recaptcha-v3-for-woocommerce/.gitignore)

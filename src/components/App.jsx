@@ -12,6 +12,9 @@ export default function App() {
 		settings: {
 			site_key: '',
 			secret_key: '',
+			key_type: 'classic',
+			gcp_project_id: '',
+			gcp_api_key: '',
 			enable_login: '0',
 			enable_registration: '0',
 			enable_checkout: '0',
@@ -149,10 +152,7 @@ export default function App() {
 					</p>
 				</div>
 				<div className="mt-4 flex md:ml-4 md:mt-0 items-center gap-x-4">
-					<StatusBadge
-						siteKey={ settings.site_key }
-						secretKey={ settings.secret_key }
-					/>
+					<StatusBadge settings={ settings } />
 				</div>
 			</div>
 
@@ -161,8 +161,7 @@ export default function App() {
 				<div className="grid grid-cols-1 gap-x-8 gap-y-8 md:grid-cols-2">
 					{ /* API credentials panel */ }
 					<SettingsPanel
-						siteKey={ settings.site_key }
-						secretKey={ settings.secret_key }
+						settings={ settings }
 						onChange={ handleSettingChange }
 					/>
 

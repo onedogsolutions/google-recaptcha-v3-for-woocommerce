@@ -70,6 +70,9 @@ class Recaptcha_Woo_Rest_Api {
 		$settings = array(
 			'site_key'               => get_option( 'recaptcha_woo_site_key', '' ),
 			'secret_key'             => get_option( 'recaptcha_woo_secret_key', '' ),
+			'key_type'               => get_option( 'recaptcha_woo_key_type', 'classic' ),
+			'gcp_project_id'         => get_option( 'recaptcha_woo_gcp_project_id', '' ),
+			'gcp_api_key'            => get_option( 'recaptcha_woo_gcp_api_key', '' ),
 			'enable_login'           => get_option( 'recaptcha_woo_enable_login', '0' ),
 			'enable_registration'    => get_option( 'recaptcha_woo_enable_registration', '0' ),
 			'enable_checkout'        => get_option( 'recaptcha_woo_enable_checkout', '0' ),
@@ -98,6 +101,20 @@ class Recaptcha_Woo_Rest_Api {
 		// Sanitize and update Secret Key.
 		if ( isset( $params['secret_key'] ) ) {
 			update_option( 'recaptcha_woo_secret_key', sanitize_text_field( $params['secret_key'] ) );
+		}
+
+		// Key type. Only 'classic' or 'enterprise' are valid.
+		if ( isset( $params['key_type'] ) ) {
+			$key_type = 'enterprise' === $params['key_type'] ? 'enterprise' : 'classic';
+			update_option( 'recaptcha_woo_key_type', $key_type );
+		}
+
+		// Sanitize and update Enterprise credentials.
+		if ( isset( $params['gcp_project_id'] ) ) {
+			update_option( 'recaptcha_woo_gcp_project_id', sanitize_text_field( $params['gcp_project_id'] ) );
+		}
+		if ( isset( $params['gcp_api_key'] ) ) {
+			update_option( 'recaptcha_woo_gcp_api_key', sanitize_text_field( $params['gcp_api_key'] ) );
 		}
 
 		// Toggles (Login, Registration, Checkout).
