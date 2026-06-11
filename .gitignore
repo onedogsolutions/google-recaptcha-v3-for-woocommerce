@@ -1,13 +1,54 @@
+# Dependency Directories
 node_modules/
-build/
-.DS_Store
-*.zip
+/vendor/
+
+# WordPress & Local Dev Exclusions
+wp-config-local.php
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
 *.log
+
+# Build Outputs & Cache Directories
+build/
+dist/
 .eslintcache
 .parcel-cache
+.cache/
+.npm/
+
+# OS-Specific Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDEs and Editors
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+*~
+project.fragment.lock.json
+
+# Archive / Distribution files
+*.zip
+*.tar.gz
+*.tgz
+
+# Logs and Caches
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-.idea/
-.vscode/
+pnpm-debug.log*
+
+# Agentic development environment
 .gemini/
