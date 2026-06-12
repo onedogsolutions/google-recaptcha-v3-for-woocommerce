@@ -2,9 +2,9 @@
 Contributors: One Dog Solutions
 Tags: recaptcha, woocommerce, captcha, spam, security
 Requires at least: 5.8
-Tested up to: 6.4
+Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 1.2.0
+Stable tag: 1.2.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -35,6 +35,9 @@ Currently, this plugin supports the classic shortcode-based checkout pages.
 We recommend a default threshold of 0.5. If you encounter spam submissions, increase the threshold closer to 1.0 (strict). If humans are blocked, lower it closer to 0.0 (lenient).
 
 == Changelog ==
+
+= 1.2.1 =
+* Added "Requires at least" and "Requires PHP" headers to the main plugin file so WordPress displays version requirements during plugin upload and blocks installation on unsupported environments.
 
 = 1.2.0 =
 * Fixed Fluent Forms key detection in the Smart Key Scavenger: keys are now read from the _fluentform_reCaptcha_details option that Fluent Forms actually uses (legacy global settings shapes are still checked as a fallback).
