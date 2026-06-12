@@ -4,7 +4,7 @@ Tags: recaptcha, woocommerce, captcha, spam, security
 Requires at least: 5.8
 Tested up to: 6.4
 Requires PHP: 7.4
-Stable tag: 1.1.0
+Stable tag: 1.1.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -35,6 +35,9 @@ Currently, this plugin supports the classic shortcode-based checkout pages.
 We recommend a default threshold of 0.5. If you encounter spam submissions, increase the threshold closer to 1.0 (strict). If humans are blocked, lower it closer to 0.0 (lenient).
 
 == Changelog ==
+
+= 1.1.1 =
+* Fixed "No route was found matching the URL and request method" when saving settings: the REST API routes were only registered in admin context, but /wp-json requests are not admin context, so the settings endpoints never existed. Routes now register on all requests.
 
 = 1.1.0 =
 * Tokens are now fetched on page load and refreshed automatically before expiry (and on checkout updates/errors), so checkout submissions triggered by payment gateway scripts (Stripe, PayPal smart buttons, express checkout) always carry a valid token. Fixes "Anti-spam verification token is missing" errors.

@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Google reCAPTCHA v3 for WooCommerce
  * Description: Google reCAPTCHA v3 integration for WooCommerce Login, Registration, and Checkout with smart key scavenging.
- * Version: 1.1.0
+ * Version: 1.1.1
  * Author: One Dog Solutions
  * Author URI: https://onedog.solutions/
  * Requires Plugins: woocommerce
@@ -17,7 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants.
-define( 'RECAPTCHA_WOO_VERSION', '1.1.0' );
+define( 'RECAPTCHA_WOO_VERSION', '1.1.1' );
 define( 'RECAPTCHA_WOO_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'RECAPTCHA_WOO_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'RECAPTCHA_WOO_FILE', __FILE__ );
@@ -27,10 +27,12 @@ define( 'RECAPTCHA_WOO_FILE', __FILE__ );
  */
 require_once RECAPTCHA_WOO_PLUGIN_DIR . 'includes/class-recaptcha-woo-key-scavenger.php';
 require_once RECAPTCHA_WOO_PLUGIN_DIR . 'includes/class-recaptcha-woo-verifier.php';
+// REST requests are not admin context (is_admin() is false for /wp-json),
+// so the REST API class must load unconditionally for its routes to exist.
+require_once RECAPTCHA_WOO_PLUGIN_DIR . 'includes/class-recaptcha-woo-rest-api.php';
 
 if ( is_admin() ) {
 	require_once RECAPTCHA_WOO_PLUGIN_DIR . 'includes/class-recaptcha-woo-admin.php';
-	require_once RECAPTCHA_WOO_PLUGIN_DIR . 'includes/class-recaptcha-woo-rest-api.php';
 } else {
 	require_once RECAPTCHA_WOO_PLUGIN_DIR . 'includes/class-recaptcha-woo-frontend.php';
 }
@@ -61,9 +63,12 @@ function recaptcha_woo_init() {
 	// Initialize validation/verification first.
 	new Recaptcha_Woo_Verifier();
 
+	// Routes only register when rest_api_init fires, so this is a no-op
+	// outside REST requests.
+	new Recaptcha_Woo_Rest_Api();
+
 	if ( is_admin() ) {
 		new Recaptcha_Woo_Admin();
-		new Recaptcha_Woo_Rest_Api();
 	} else {
 		new Recaptcha_Woo_Frontend();
 	}
