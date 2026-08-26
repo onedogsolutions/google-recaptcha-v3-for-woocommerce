@@ -9,6 +9,35 @@ export default function Compatibility( { settings, onChange } ) {
 	const verbose =
 		settings.verbose_logging === '1' || settings.verbose_logging === true;
 
+	// Read-only, supplied by the settings endpoint: what this very request
+	// resolved to. The point of showing both is that an operator can see a
+	// mismatch without reading a log or guessing.
+	const remoteAddr = settings.remote_addr || '';
+	const resolvedIp = settings.resolved_client_ip || '';
+	const trustedProxies = settings.trusted_proxies || '';
+	const ipHeader = settings.client_ip_header || 'X-Forwarded-For';
+	const proxiesDeclared = trustedProxies.trim() !== '';
+	const unwrapping =
+		remoteAddr !== '' && resolvedIp !== '' && remoteAddr !== resolvedIp;
+
+	let ipNote;
+	if ( unwrapping ) {
+		ipNote = __(
+			'These differ, so a declared proxy is being unwrapped and the visitor’s own address is what reaches Google. This is the correct state for a site behind a CDN.',
+			'google-security-for-wordpress'
+		);
+	} else if ( proxiesDeclared ) {
+		ipNote = __(
+			'These match. Either this request did not arrive through one of the proxies declared below, or the address below is genuinely yours.',
+			'google-security-for-wordpress'
+		);
+	} else {
+		ipNote = __(
+			'These match, which is correct for a site that serves browsers directly. If this address is your CDN rather than your own, declare it below — otherwise every visitor is being reported to Google from it.',
+			'google-security-for-wordpress'
+		);
+	}
+
 	const adminData =
 		typeof window !== 'undefined' && window.gswpAdminData
 			? window.gswpAdminData
@@ -184,6 +213,131 @@ export default function Compatibility( { settings, onChange } ) {
 						) }
 					</p>
 				) }
+
+				{ /* Visitor IP address */ }
+				<div className="mt-8 border-t border-gray-100 pt-6">
+					<h3 className="text-sm font-semibold text-gray-900">
+						{ __(
+							'Visitor IP address',
+							'google-security-for-wordpress'
+						) }
+					</h3>
+					<p className="mt-1 text-sm text-gray-500">
+						{ __(
+							'Every reCAPTCHA assessment reports the visitor’s address to Google, and Google weighs it. If this site sits behind a CDN or reverse proxy, the address WordPress sees is the proxy’s — so every visitor is reported from one datacenter address, which depresses scores for all of them and gives Account Defender nothing to distinguish them by. Declare your proxies here and the real visitor address is used instead.',
+							'google-security-for-wordpress'
+						) }
+					</p>
+
+					<div className="mt-4 rounded-md bg-gray-50 border border-gray-200 p-4">
+						<dl className="grid grid-cols-1 gap-y-3 sm:grid-cols-2 sm:gap-x-6">
+							<div>
+								<dt className="text-xs font-medium uppercase tracking-wide text-gray-500">
+									{ __(
+										'Seen by WordPress',
+										'google-security-for-wordpress'
+									) }
+								</dt>
+								<dd className="mt-1 font-mono text-sm text-gray-900">
+									{ remoteAddr ||
+										__(
+											'unavailable',
+											'google-security-for-wordpress'
+										) }
+								</dd>
+							</div>
+							<div>
+								<dt className="text-xs font-medium uppercase tracking-wide text-gray-500">
+									{ __(
+										'Sent to Google',
+										'google-security-for-wordpress'
+									) }
+								</dt>
+								<dd className="mt-1 font-mono text-sm text-gray-900">
+									{ resolvedIp ||
+										__(
+											'unavailable',
+											'google-security-for-wordpress'
+										) }
+								</dd>
+							</div>
+						</dl>
+						<p className="mt-3 text-xs leading-5 text-gray-500">
+							{ ipNote }
+						</p>
+					</div>
+
+					<div className="mt-6">
+						<label
+							htmlFor="gswp-trusted-proxies"
+							className="block text-sm font-semibold text-gray-900"
+						>
+							{ __(
+								'Trusted proxies',
+								'google-security-for-wordpress'
+							) }
+						</label>
+						<textarea
+							id="gswp-trusted-proxies"
+							rows="3"
+							value={ trustedProxies }
+							onChange={ ( e ) =>
+								onChange( 'trusted_proxies', e.target.value )
+							}
+							placeholder="192.0.2.10, 198.51.100.0/24, 2400:cb00::/32"
+							className="mt-2 block w-full rounded-md border-0 py-1.5 font-mono text-sm text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-indigo-600 sm:leading-6"
+						/>
+						<p className="mt-2 text-sm text-gray-500">
+							{ __(
+								'Addresses or CIDR ranges, IPv4 or IPv6, separated by commas or line breaks. Leave empty — the default — and the address WordPress sees is used unchanged, exactly as before. Entries that are not a valid address or range are dropped when you save.',
+								'google-security-for-wordpress'
+							) }
+						</p>
+						<p className="mt-2 text-xs leading-5 text-gray-400">
+							{ __(
+								'Only list proxies you control. The forwarded address is read solely when a request actually arrives from one of these, because any client can claim any address in a forwarding header — trusting that unconditionally would let a low-scoring visitor pass off a clean address as their own.',
+								'google-security-for-wordpress'
+							) }
+						</p>
+					</div>
+
+					<div className="mt-6">
+						<label
+							htmlFor="gswp-client-ip-header"
+							className="block text-sm font-semibold text-gray-900"
+						>
+							{ __(
+								'Forwarded address header',
+								'google-security-for-wordpress'
+							) }
+						</label>
+						<select
+							id="gswp-client-ip-header"
+							value={ ipHeader }
+							onChange={ ( e ) =>
+								onChange( 'client_ip_header', e.target.value )
+							}
+							className="mt-2 block w-full max-w-xs rounded-md border-0 py-1.5 pl-3 pr-10 text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 focus:ring-2 focus:ring-inset focus:ring-indigo-600 sm:text-sm sm:leading-6"
+						>
+							<option value="X-Forwarded-For">
+								X-Forwarded-For
+							</option>
+							<option value="CF-Connecting-IP">
+								CF-Connecting-IP
+							</option>
+							<option value="True-Client-IP">
+								True-Client-IP
+							</option>
+							<option value="X-Real-IP">X-Real-IP</option>
+						</select>
+						<p className="mt-2 text-sm text-gray-500">
+							{ __(
+								'Which header your proxy puts the visitor’s address in. X-Forwarded-For suits most CDNs and load balancers, including QUIC.cloud; Cloudflare populates CF-Connecting-IP. Ignored while no trusted proxies are declared.',
+								'google-security-for-wordpress'
+							) }
+						</p>
+					</div>
+				</div>
 
 				{ /* Diagnostics: verbose logging */ }
 				<div className="mt-8 border-t border-gray-100 pt-6 flex flex-col gap-y-3 sm:flex-row sm:items-center sm:justify-between sm:gap-x-8">

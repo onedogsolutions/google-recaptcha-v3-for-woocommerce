@@ -80,6 +80,8 @@ export default function App() {
 			alert_checkout: '1',
 			alert_leak: '1',
 			verbose_logging: '0',
+			trusted_proxies: '',
+			client_ip_header: 'X-Forwarded-For',
 			enable_wp_login: '0',
 			enable_wp_register: '0',
 			enable_wp_lostpassword: '0',
