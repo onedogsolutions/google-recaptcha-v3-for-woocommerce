@@ -1025,7 +1025,7 @@ class GSWP_Alerts {
 	 * @return string
 	 */
 	private static function client_ip() {
-		return isset( $_SERVER['REMOTE_ADDR'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REMOTE_ADDR'] ) ) : '';
+		return GSWP_Client_IP::get();
 	}
 
 	/**

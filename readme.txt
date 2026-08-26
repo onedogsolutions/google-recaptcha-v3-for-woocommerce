@@ -4,7 +4,7 @@ Tags: recaptcha, woocommerce, two-factor, 2fa, security
 Requires at least: 5.8
 Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 2.28.0
+Stable tag: 2.29.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -86,6 +86,12 @@ Point integrations at a dedicated machine account and exempt only that account, 
 7. **Operate**: one named application password per tool per site; review "Last Used" periodically; rotate on a schedule; on any incident, revoke that single password (or delete the service account) without disrupting anyone's normal access.
 
 == Changelog ==
+
+= 2.29.0 =
+* Fixed: on a site behind a CDN or reverse proxy, every reCAPTCHA assessment reported the proxy's address as the visitor's. The plugin read `REMOTE_ADDR` and nothing else, so a QUIC.cloud, Cloudflare or load-balanced site sent Google one datacenter address for every visitor — depressing scores site-wide, teaching Account Defender that the whole site shares one network, and putting the wrong address in security alert emails. A new trusted-proxy resolver reads the forwarded client address, but **only** when the request actually arrived from a proxy the operator has declared, and only by walking the forwarded chain from the end nearest the server. Any client can send `X-Forwarded-For`, so trusting it unconditionally would let an attacker launder a bad score by claiming a clean address; that is why the old code read `REMOTE_ADDR`, and why the default is an empty trusted list. Nothing changes on upgrade until proxies are configured in the new `gswp_trusted_proxies` option (or the filter of the same name), and `gswp_client_ip_header` selects the header for Cloudflare and Akamai style setups.
+* Added: when a request carries a forwarding header but no trusted proxies are configured, the plugin logs a throttled warning naming the address it is about to send Google. The symptom of getting this wrong — every visitor scoring low, for no visible reason — otherwise gives an operator nothing to search for.
+* Fixed: a WooCommerce checkout could submit a reCAPTCHA token that had already expired. Tokens live 120 seconds and are refreshed on a 100-second interval, but browsers suspend that timer for a hidden tab or a locked phone, so a customer who left the checkout page and came back could submit a token minutes old. The place-order guard caught a missing token but never a stale one; it now treats a token older than the refresh interval as missing, mints a fresh one, and resubmits. The token field is still never blanked, and a reCAPTCHA outage cannot trap the customer in a retry loop or a dead button — the submission proceeds and the server decides.
+* Fixed: the WooCommerce Checkout block did not refresh its token when the page became visible again, so the same stale-token submission was possible there. It now refreshes on tab focus and on back-button restore, matching the classic checkout.
 
 = 2.28.0 =
 * Fixed: a WooCommerce checkout could be refused as suspected spam even when reCAPTCHA Transaction defense had scored the payment as low risk. reCAPTCHA returns two independent judgements — a general bot score for the browser, and (when transaction data is sent) a fraud probability for the specific payment. The bot score was checked first and rejected on its own, so a shopper on a VPN, a privacy extension or a corporate proxy could be turned away with a low score while Google's payment fraud model had already cleared the transaction. The fraud verdict now decides: when it is below the blocking threshold, the checkout proceeds and the override is logged. Automated card testing is unaffected — it scores low AND returns high transaction risk, so it is still refused. Applies to WooCommerce classic and block checkout and to Gravity Forms / Fluent Forms payment forms. Sites that prefer the old behaviour can return false from the new `gswp_defer_score_to_fraud_verdict` filter.

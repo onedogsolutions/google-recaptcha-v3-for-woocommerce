@@ -1461,7 +1461,7 @@ class GSWP_Verifier {
 	 * @return string Remote IP address.
 	 */
 	private function get_remote_ip() {
-		return isset( $_SERVER['REMOTE_ADDR'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REMOTE_ADDR'] ) ) : '';
+		return GSWP_Client_IP::get();
 	}
 
 	/**

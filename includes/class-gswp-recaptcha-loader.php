@@ -667,6 +667,7 @@ class GSWP_Recaptcha_Loader {
 						client.execute(siteKey, { action: action }).then(
 							function(token) {
 								input.value = token;
+								input.setAttribute('data-gswp-minted', String(Date.now()));
 								resolve(token);
 							},
 							reject
@@ -703,6 +704,35 @@ class GSWP_Recaptcha_Loader {
 				window.setTimeout(function() {
 					replaceToken(input);
 				}, 0);
+			}
+
+			// A v3 token is valid for 120 seconds and the interval below
+			// refreshes at 100, so a field older than that is one the interval
+			// did not reach: a backgrounded tab or a locked phone, where timers
+			// are suspended. That is how a ten-minute-old token reached a
+			// checkout on 2026-08-26 and was scored 0.2.
+			//
+			// Reading the stamp never writes to the field. The INVARIANT above
+			// still holds — a stale token is left in place and still submitted
+			// if a fresh one cannot be fetched. Stale is a reason to try for a
+			// better token, never a reason to block a payment.
+			var MAX_TOKEN_AGE = REFRESH_INTERVAL;
+
+			function isStale(input) {
+				if (!input || !input.value) {
+					return false;
+				}
+
+				var minted = parseInt(input.getAttribute('data-gswp-minted'), 10);
+
+				// Populated but unstamped: not minted by this bootstrap on this
+				// page load. Treat as stale and re-mint; the cost is one extra
+				// token, and the alternative is submitting an unknown one.
+				if (!minted) {
+					return true;
+				}
+
+				return (Date.now() - minted) > MAX_TOKEN_AGE;
 			}
 
 			function tokenFieldIn(node) {
@@ -865,15 +895,40 @@ class GSWP_Recaptcha_Loader {
 						queueRefresh();
 					});
 
+					// Suppression is keyed to FAILURE, not to every veto.
+					//
+					// fetchToken() resubmits on rejection as well as on success
+					// — a reCAPTCHA outage must not strand a customer at a dead
+					// Place order button — so a field that cannot be refreshed
+					// would otherwise veto, resubmit, veto again, and spin. But
+					// throttling every veto would break the case this hook was
+					// written for: checkout_error blanks the field and queues a
+					// refresh, and a customer who clicks again before that
+					// lands needs the veto to fire, however recently it fired.
+					//
+					// So vetoes are free while tokens can be minted, and stop
+					// only once minting has actually failed. The stale or empty
+					// token then goes to the server, which rejects it with a
+					// message that tells the customer to try again — degraded,
+					// but never a spin and never a dead button.
+					var vetoBlockedUntil = 0;
+
 					$(document.body).on('checkout_place_order', function() {
 						var $form = $('form.woocommerce-checkout');
 						var $input = $form.find('.g-recaptcha-response');
+						var input = $input.get(0);
 
-						if ($input.length && !$input.val() && api()) {
+						if ($input.length && (!$input.val() || isStale(input)) && api()
+							&& Date.now() > vetoBlockedUntil) {
 							var resubmit = function() {
 								$form.trigger('submit');
 							};
-							fetchToken($input.get(0)).then(resubmit, resubmit);
+
+							fetchToken(input).then(resubmit, function() {
+								vetoBlockedUntil = Date.now() + 15000;
+								resubmit();
+							});
+
 							return false;
 						}
 						return true;

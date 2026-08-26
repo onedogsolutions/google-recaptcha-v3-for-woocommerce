@@ -95,6 +95,10 @@ class GSWP_Rest_Api {
 			'alert_registration'     => get_option( 'gswp_alert_registration', '1' ),
 			'alert_checkout'         => get_option( 'gswp_alert_checkout', '1' ),
 			'verbose_logging'        => get_option( 'gswp_verbose_logging', '0' ),
+			'trusted_proxies'        => get_option( 'gswp_trusted_proxies', '' ),
+			'client_ip_header'       => get_option( 'gswp_client_ip_header', 'X-Forwarded-For' ),
+			'resolved_client_ip'     => GSWP_Client_IP::get(),
+			'remote_addr'            => GSWP_Client_IP::remote_addr(),
 			'enable_wp_login'        => get_option( 'gswp_enable_wp_login', '0' ),
 			'enable_wp_register'     => get_option( 'gswp_enable_wp_register', '0' ),
 			'enable_wp_lostpassword' => get_option( 'gswp_enable_wp_lostpassword', '0' ),
@@ -393,7 +397,7 @@ class GSWP_Rest_Api {
 			'token'          => 'gswp-diagnostic-dummy-token',
 			'siteKey'        => $site_key,
 			'expectedAction' => 'diagnostic',
-			'userIpAddress'  => isset( $_SERVER['REMOTE_ADDR'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REMOTE_ADDR'] ) ) : '127.0.0.1',
+			'userIpAddress'  => GSWP_Client_IP::get( '127.0.0.1' ),
 		);
 
 		$request_body = wp_json_encode( array( 'event' => $event ) );
@@ -479,7 +483,7 @@ class GSWP_Rest_Api {
 				'body'    => array(
 					'secret'   => $secret_key,
 					'response' => 'gswp-diagnostic-dummy-token',
-					'remoteip' => isset( $_SERVER['REMOTE_ADDR'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REMOTE_ADDR'] ) ) : '127.0.0.1',
+					'remoteip' => GSWP_Client_IP::get( '127.0.0.1' ),
 				),
 			)
 		);
@@ -586,7 +590,7 @@ class GSWP_Rest_Api {
 			'token'          => 'gswp-diagnostic-dummy-token',
 			'siteKey'        => $site_key,
 			'expectedAction' => 'login',
-			'userIpAddress'  => isset( $_SERVER['REMOTE_ADDR'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REMOTE_ADDR'] ) ) : '127.0.0.1',
+			'userIpAddress'  => GSWP_Client_IP::get( '127.0.0.1' ),
 			'userInfo'       => $user_info,
 		);
 
@@ -727,7 +731,7 @@ class GSWP_Rest_Api {
 			'token'           => 'gswp-diagnostic-dummy-token',
 			'siteKey'         => $site_key,
 			'expectedAction'  => 'checkout',
-			'userIpAddress'   => isset( $_SERVER['REMOTE_ADDR'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REMOTE_ADDR'] ) ) : '127.0.0.1',
+			'userIpAddress'   => GSWP_Client_IP::get( '127.0.0.1' ),
 			'transactionData' => $transaction_data,
 			'fraudPrevention' => 'ENABLED',
 		);
@@ -905,6 +909,35 @@ class GSWP_Rest_Api {
 				}
 			}
 			update_option( 'gswp_alert_email', implode( ', ', array_values( array_unique( $emails ) ) ) );
+		}
+
+		// Trusted proxies: addresses and CIDR ranges, whitespace or comma
+		// separated, each validated, invalid entries dropped. Storing a typo
+		// here would not fail loudly — it would simply never match, leaving the
+		// site quietly reporting its CDN's address to Google forever.
+		if ( isset( $params['trusted_proxies'] ) ) {
+			$ranges  = array();
+			$entries = preg_split( '/[\s,]+/', (string) $params['trusted_proxies'], -1, PREG_SPLIT_NO_EMPTY );
+
+			foreach ( (array) $entries as $entry ) {
+				$entry = sanitize_text_field( $entry );
+
+				if ( GSWP_Client_IP::is_valid_range( $entry ) ) {
+					$ranges[] = $entry;
+				}
+			}
+
+			update_option( 'gswp_trusted_proxies', implode( ', ', array_values( array_unique( $ranges ) ) ) );
+		}
+
+		// The header a trusted proxy forwards the client address in. Only the
+		// headers the resolver knows how to read are accepted.
+		if ( isset( $params['client_ip_header'] ) ) {
+			$header = (string) $params['client_ip_header'];
+			update_option(
+				'gswp_client_ip_header',
+				isset( GSWP_Client_IP::HEADERS[ $header ] ) ? $header : 'X-Forwarded-For'
+			);
 		}
 
 		// Alert delivery mode. Only known modes are accepted. On a change, clear

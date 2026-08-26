@@ -154,6 +154,32 @@
 				}
 			}, REFRESH_INTERVAL );
 
+			// The interval above is skipped while the tab is hidden, and the
+			// browser suspends its timers anyway on a locked phone or a
+			// backgrounded tab. Whatever token was current when that happened
+			// keeps ageing, so refresh the moment the page is visible again
+			// rather than waiting up to another 90 seconds for the interval.
+			// The classic bootstrap has done this since 2.22.1; the block
+			// checkout was missing it, which is the path a customer took on
+			// 2026-08-26 when a ten-minute-old token reached an assessment.
+			function onVisible() {
+				if ( ! document.hidden ) {
+					refresh();
+				}
+			}
+
+			// A bfcache restore resurrects a page whose timers were frozen and
+			// which was already visible when it froze, so visibilitychange
+			// never fires for it.
+			function onPageShow( event ) {
+				if ( event.persisted ) {
+					refresh();
+				}
+			}
+
+			document.addEventListener( 'visibilitychange', onVisible );
+			window.addEventListener( 'pageshow', onPageShow );
+
 			// Refresh around each submit attempt: tokens are single use, so a
 			// failed attempt (which returns checkout to idle) needs a new one,
 			// and a fresh token minimises the chance of an expiry on retry.
@@ -183,6 +209,8 @@
 			return function () {
 				mounted = false;
 				window.clearInterval( timer );
+				document.removeEventListener( 'visibilitychange', onVisible );
+				window.removeEventListener( 'pageshow', onPageShow );
 				if ( typeof unsubscribe === 'function' ) {
 					unsubscribe();
 				}
