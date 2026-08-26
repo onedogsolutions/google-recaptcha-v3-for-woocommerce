@@ -4,7 +4,7 @@ Tags: recaptcha, woocommerce, two-factor, 2fa, security
 Requires at least: 5.8
 Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 2.27.3
+Stable tag: 2.28.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -86,6 +86,10 @@ Point integrations at a dedicated machine account and exempt only that account, 
 7. **Operate**: one named application password per tool per site; review "Last Used" periodically; rotate on a schedule; on any incident, revoke that single password (or delete the service account) without disrupting anyone's normal access.
 
 == Changelog ==
+
+= 2.28.0 =
+* Fixed: a WooCommerce checkout could be refused as suspected spam even when reCAPTCHA Transaction defense had scored the payment as low risk. reCAPTCHA returns two independent judgements — a general bot score for the browser, and (when transaction data is sent) a fraud probability for the specific payment. The bot score was checked first and rejected on its own, so a shopper on a VPN, a privacy extension or a corporate proxy could be turned away with a low score while Google's payment fraud model had already cleared the transaction. The fraud verdict now decides: when it is below the blocking threshold, the checkout proceeds and the override is logged. Automated card testing is unaffected — it scores low AND returns high transaction risk, so it is still refused. Applies to WooCommerce classic and block checkout and to Gravity Forms / Fluent Forms payment forms. Sites that prefer the old behaviour can return false from the new `gswp_defer_score_to_fraud_verdict` filter.
+* Changed: the low-score rejection message no longer tells the visitor they look like spam. A low score is frequently a VPN, a locked phone or a stale page rather than an attacker, and a paying customer should not be accused of one. The message now reads "This submission did not pass our automated security check. Please refresh the page and try again, or contact us if the problem continues." The operator-facing log still records the exact score and threshold, so nothing is lost for diagnosis. Also applies to Gravity Forms and Fluent Forms rejections.
 
 = 2.27.3 =
 * Fixed: admin-initiated password resets failed with "Anti-spam verification token is missing" on the user profile "Send Reset Link" button, and with "Password reset links sent to 0 users" from the Users screen row action and bulk action. Admin-initiated resets are now exempt from reCAPTCHA token enforcement. They are performed by an authenticated administrator and are already protected by a capability check and a WordPress nonce, both verified by WordPress core; none of the three entry points can carry a reCAPTCHA token, so enforcing one only ever blocked a legitimate action. The public lost-password form on wp-login.php is unchanged and remains fully protected.

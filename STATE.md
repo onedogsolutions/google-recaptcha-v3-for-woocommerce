@@ -2,7 +2,9 @@
 
 ## Release state
 
-**`main` is at v2.27.3**, which abandons the attempt to enforce reCAPTCHA on admin-initiated password resets and exempts them instead. v2.26.2, v2.27.0, v2.27.1 and v2.27.2 were four consecutive releases trying to carry a token into wp-admin, and all four failed on the operator's site. The investigation behind 2.27.3 is in `PLAN-admin-password-reset.md`; the short version is that **none of the three admin entry points can deliver a token to this plugin**, so no amount of client-side work was going to fix it. The users.php row action is a plain `<a href>`; the users.php bulk action submits through core's `<form method="get">`, which puts the field in `$_GET` while the verifier reads `$_POST`; and the profile "Send Reset Link" AJAX request was being matched on `action=send_password_reset` when the wire action is `send-password-reset` (core registers AJAX actions hyphenated and derives the PHP handler name with `str_replace('-','_')` — the underscore form is a function name and never appears in a request body). Admin resets are now exempt, gated on a re-proved capability check and nonce; the wp-admin script loading, token fields and `XMLHttpRequest` patching added across those four releases are deleted. The public lost-password form is untouched and still enforced. **v2.27.3 has NOT been validated on a live site** — see the evidence note in Phase 57.
+**`main` is at v2.28.0**, which stops the reCAPTCHA bot score from refusing a payment that reCAPTCHA's own fraud model has already cleared, and stops the plugin telling a paying customer he looks like spam. It exists because of a field incident on 2026-08-26, recorded in full in Phase 58. **v2.28.0 has NOT been validated on a live site** — the evidence behind it is `php -l`, an 11-assertion stub harness that replays the incident's actual assessment values, and `tests/manual/30-checkout-score-vs-risk.php`, which has not been run against a WordPress install.
+
+**v2.27.3 is the preceding release**, which abandons the attempt to enforce reCAPTCHA on admin-initiated password resets and exempts them instead. v2.26.2, v2.27.0, v2.27.1 and v2.27.2 were four consecutive releases trying to carry a token into wp-admin, and all four failed on the operator's site. The investigation behind 2.27.3 is in `PLAN-admin-password-reset.md`; the short version is that **none of the three admin entry points can deliver a token to this plugin**, so no amount of client-side work was going to fix it. The users.php row action is a plain `<a href>`; the users.php bulk action submits through core's `<form method="get">`, which puts the field in `$_GET` while the verifier reads `$_POST`; and the profile "Send Reset Link" AJAX request was being matched on `action=send_password_reset` when the wire action is `send-password-reset` (core registers AJAX actions hyphenated and derives the PHP handler name with `str_replace('-','_')` — the underscore form is a function name and never appears in a request body). Admin resets are now exempt, gated on a re-proved capability check and nonce; the wp-admin script loading, token fields and `XMLHttpRequest` patching added across those four releases are deleted. The public lost-password form is untouched and still enforced. **v2.27.3 has NOT been validated on a live site** — see the evidence note in Phase 57.
 
 **Two process failures are worth keeping, because they are why this shipped four times.** First, the manual test asserted the admin inline script "targets `send_password_reset`" — it checked for the string the code contained rather than the string the browser sends, so it passed against code that could not send a reset link at all. **Assert on the value that crosses the wire, not on the presence of the mechanism meant to put it there.** Second, every one of those releases was signed off on `php -l`, `node --check` and a webpack build. Two of the four defects were single wrong strings in a comparison; no lint or build can see those. This is the same shape as the Phase 43/44 and Fluent Forms `raw_option()` lessons already recorded below: **a binding to another codebase is verified only along the axis it was actually tested on**, and "the code is present and parses" is not an axis that touches behaviour.
 
@@ -32,7 +34,53 @@ It was numbered Phase 49 on its branch, which collided with the already-released
 
 *(An earlier revision of this section claimed `main` had been stranded at v2.16.0 for thirteen releases and was missing the 2.17.0 checkout bypass fix. That was wrong. It was read from a remote-tracking ref that had not been fetched since the session began, so `origin/main` pointed at a long-superseded commit. `git push` reported the real one. Recorded rather than quietly deleted because the failure mode is worth keeping: **a stale `origin/*` ref reads exactly like a real branch, and a claim about repository state is only as current as the last fetch.** Fetch before asserting.)*
 
-## Current Phase: Phase 57 (Admin password resets exempt from token enforcement)
+## Current Phase: Phase 58 (Transaction defense verdict outranks the bot score)
+
+### Phase 58 Modifications (v2.28.0)
+
+**Problem, from the field.** A named customer of a live WooCommerce store could not complete an order on 2026-08-26 and emailed the store to ask whether he should "call a human or try the incognito approach". The operator found nothing: WP Activity Log had no record, the Transaction defense list in Cloud Console showed 8 successful transactions and no risky ones, Stripe had no block, and blocking on high-risk transactions was switched off. The single assessment behind the refusal (Cloud Logging, 14:25:26.191Z) read:
+
+```
+riskAnalysis.score                        0.2
+riskAnalysis.reasons                      ["UNEXPECTED_ENVIRONMENT"]
+tokenProperties.valid                     true
+tokenProperties.createTime                14:14:49.758Z   (10m36s before use)
+tokenProperties.action                    "checkout"
+fraudPreventionAssessment.transactionRisk 0.10000000149011612
+event.userIpAddress                       159.100.171.53  (VPN exit, Atlanta)
+```
+
+**Nothing was wrong with the token.** It was `valid: true` and carried the right action. The refusal was the score gate in `verify_token()`: 0.2 against the 0.5 default for `gswp_threshold_checkout`, which returned `recaptcha_low_score` and told the customer his order was "rejected as potential spam". He was on a VPN, on a phone, returning to a checkout tab he had left for ten minutes to fetch his wallet from the car — which is what a 0.2 with `UNEXPECTED_ENVIRONMENT` actually describes.
+
+**The plugin had a second, better answer in hand and ignored it.** The same assessment carried `transactionRisk: 0.10` — Google's payment fraud model, looking at the same event *with the transaction attached*, called it safe. `validate_checkout()` reads the score first, adds the error, and only then calls `process_fraud_prevention()`, so the fraud verdict never got to speak. **Two independent judgements, and the weaker one about the browser was overriding the stronger one about the payment.**
+
+**A VPN is not evidence about a card.** This was never going to be a one-off: a corporate VPN, a privacy extension, a mobile carrier proxy or a locked phone depresses the score of every legitimate shopper behind it, and each one would have been refused and accused.
+
+**Decision:** where a fraud verdict exists and is below the blocking threshold, it decides. `GSWP_Verifier::fraud_verdict_admits_low_score()` is consulted before the low-score `WP_Error` is built, and admits the submission when `transactionRisk < gswp_threshold_txn` (default 0.8). Deliberately keyed on the threshold rather than on `gswp_txn_block`: the threshold defines what counts as risky, the toggle only decides whether risk alone blocks.
+
+**Carding does not benefit.** Automated card testing scores low AND returns high `transactionRisk` — the case Transaction defense exists to catch — so it fails the check and is refused on the score exactly as before. The override only ever admits a transaction Google's fraud model has already cleared. The comparison is `>=` refuses, matching `process_fraud_prevention()` so the two cannot reach opposite conclusions about one payment.
+
+**Reachable only where transactionData was sent:** WooCommerce classic checkout, the Store API block checkout, and Gravity Forms / Fluent Forms payment forms. Login, registration, comments and non-payment forms leave `$last_fraud_assessment` null and are untouched.
+
+**The message.** "Verification score too low. Submission rejected as potential spam." is gone from all three files that carried it. This is the second incident in this project's history where that sentence was shown to a working customer — Phase 48 was the first, a named customer told she was spam while editing her own profile. The docblock on `log_rejection()` already says a rejection nobody can explain is a defect in its own right; a rejection that *misexplains* itself to the customer is the same defect with a worse blast radius. The operator-facing log still records the exact score and threshold, so nothing is lost for diagnosis.
+
+**Changes:**
+
+- `includes/class-gswp-verifier.php`:
+  - Added `fraud_verdict_admits_low_score()` (public, so the two form providers can consult the same decision), with the `gswp_defer_score_to_fraud_verdict` filter as the escape hatch back to pre-2.28.0 behaviour. Logs whenever it admits — a submission that would have been blocked and was not is exactly the event an operator needs to find afterwards.
+  - The low-score branch of `verify_token()` consults it first and caches `true` under the existing token-cache key on admission, so a second verification of the same token in one request agrees with the first.
+  - Reworded the `recaptcha_low_score` message. The error **code** is unchanged, so anything keying on it keeps working.
+- `includes/class-gswp-provider-gravity-forms.php`, `includes/class-gswp-provider-fluent-forms.php`: the action-mismatch fallback re-applies the score threshold itself, bypassing the verifier's own gate, so both now consult `fraud_verdict_admits_low_score()` too. Same reworded message.
+- `tests/manual/30-checkout-score-vs-risk.php`: new. Replays the incident's actual assessment values, asserts carding is still refused, checks the threshold boundary, checks the four no-transactionData contexts, and greps the plugin for the accusatory string.
+
+**Evidence, stated plainly:** `php -l` on all four touched files, and an 11-assertion stub harness (WordPress functions faked, private state seeded by reflection) covering the incident replay, the carding case, both sides of the threshold boundary, the null-verdict contexts, a missing `transactionRisk` key, an operator-lowered threshold, and the filter in both directions. **No WordPress, no WooCommerce, no browser, no live site.** `tests/manual/30` has not been run. Per the Phase 57 lesson, note what that evidence does *not* cover: the harness proves the decision function, not that `validate_checkout()` and `validate_store_checkout()` reach it on a real request. The staging check that settles it is a real checkout that scores below threshold with a low fraud risk.
+
+**Two things this release does NOT do, both deliberate:**
+
+1. **`get_remote_ip()` still returns `REMOTE_ADDR` and nothing else** (six call sites: the verifier, the alerts class, four in the REST API). On this operator's site that is correct — the origin already restores real client IPs behind QUIC.cloud, confirmed by the admin's own diagnostic assessment carrying their real address. On a site behind a proxy that does *not* restore it, every assessment would carry the CDN's IP: scores depressed for everyone, Account Defender learning against one shared address, and alert emails naming the wrong IP. Fixing it means trusted-proxy configuration, because blindly trusting `X-Forwarded-For` would let anyone launder a bad score by forging a clean address in a header — which is why the code reads `REMOTE_ADDR` in the first place. Worth doing, not worth guessing at.
+2. **Nothing holds a submission for a fresh token.** The 10m36s-old token in the incident was submitted because the refresh loop is skipped while `document.hidden` and the `visibilitychange` refresh is fire-and-forget; the `checkout_place_order` veto only catches an *empty* field, never a stale one. A freshness guard (stamp the mint time, treat an over-age token as empty) would have minted a new token for that submission, which would have scored better than a ten-minute-old one even from a VPN. Separate change, separate risk surface — the INVARIANT note in `get_bootstrap_js()` constrains it, since a token field must never be observably empty.
+
+## Historical Phase: Phase 57 (Admin password resets exempt from token enforcement)
 
 ### Phase 57 Modifications (v2.27.3)
 

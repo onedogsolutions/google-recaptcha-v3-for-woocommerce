@@ -1,6 +1,6 @@
 {
   "name": "google-security-for-wordpress",
-  "version": "2.27.3",
+  "version": "2.28.0",
   "description": "A Google-powered security suite for WordPress: reCAPTCHA v3 scoring on the login, registration, lost password, and WooCommerce checkout forms, plus TOTP two-factor authentication compatible with Google Authenticator.",
   "main": "build/index.js",
   "scripts": {

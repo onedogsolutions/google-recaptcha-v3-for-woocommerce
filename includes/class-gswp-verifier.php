@@ -329,6 +329,20 @@ class GSWP_Verifier {
 			$threshold        = floatval( get_option( 'gswp_threshold_' . $context, '0.5' ) );
 
 			if ( $this->last_score < $threshold ) {
+				// A payment that carried transactionData has already been
+				// judged by the model built to judge payments. When that model
+				// clears it, it outranks the generic bot score — see
+				// fraud_verdict_admits_low_score().
+				if ( $this->fraud_verdict_admits_low_score() ) {
+					$this->token_cache[ $cache_key ] = array(
+						'result'       => true,
+						'score'        => $this->last_score,
+						'token_action' => $this->last_token_action,
+					);
+
+					return true;
+				}
+
 				// The only rejection in this class that is an honest statement
 				// about the visitor: Google scored the traffic and it came up
 				// short. Every other rejection path is about the token.
@@ -340,7 +354,7 @@ class GSWP_Verifier {
 
 				$final = new WP_Error(
 					'recaptcha_low_score',
-					__( '<strong>Error:</strong> Verification score too low. Submission rejected as potential spam.', 'google-security-for-wordpress' )
+					__( '<strong>Error:</strong> This submission did not pass our automated security check. Please refresh the page and try again, or contact us if the problem continues.', 'google-security-for-wordpress' )
 				);
 
 				$this->token_cache[ $cache_key ] = array(
@@ -411,6 +425,79 @@ class GSWP_Verifier {
 		} else {
 			$this->log( $message );
 		}
+	}
+
+	/**
+	 * Whether Transaction defense clears a submission the score would reject.
+	 *
+	 * reCAPTCHA returns two independent judgements for a payment. `riskAnalysis.score`
+	 * is a general "how much does this look like a bot" signal about the browser.
+	 * `fraudPreventionAssessment.transactionRisk` — returned only when the assessment
+	 * carries transactionData — is a fraud probability for this specific payment.
+	 *
+	 * Until 2.28.0 the score was checked first and returned a WP_Error on its own,
+	 * so a transaction Google's payment model had explicitly cleared could still be
+	 * refused because the generic score came up short. That is not hypothetical: a
+	 * customer on a corporate VPN, returning to a checkout tab after ten minutes,
+	 * scored 0.2 with reason UNEXPECTED_ENVIRONMENT while transactionRisk came back
+	 * 0.10. The fraud model looked at the same event and called it safe; the score
+	 * gate refused the order and told him he looked like spam. A VPN, a privacy
+	 * extension or a corporate proxy depresses the score of every legitimate shopper
+	 * behind it, and none of that is evidence about a card.
+	 *
+	 * So when a fraud verdict exists and it is below the blocking threshold, the
+	 * fraud verdict decides. A carding run does not benefit from this: automated
+	 * card testing scores low AND carries high transactionRisk, which fails the
+	 * check below and is still refused on the score. This only ever admits a
+	 * transaction Google's fraud model has already cleared.
+	 *
+	 * Only reachable where transactionData was sent — WooCommerce checkout, and
+	 * Gravity Forms / Fluent Forms payment forms. Every other context leaves
+	 * $last_fraud_assessment null and is unaffected.
+	 *
+	 * Logs whenever it admits. A submission that would have been blocked and was
+	 * not is precisely the event an operator needs to be able to find later.
+	 *
+	 * @return bool True when the fraud verdict should override a low score.
+	 */
+	public function fraud_verdict_admits_low_score() {
+		if ( null === $this->last_fraud_assessment || ! isset( $this->last_fraud_assessment['transactionRisk'] ) ) {
+			return false;
+		}
+
+		$risk      = floatval( $this->last_fraud_assessment['transactionRisk'] );
+		$threshold = floatval( get_option( 'gswp_threshold_txn', '0.8' ) );
+
+		if ( $risk >= $threshold ) {
+			return false;
+		}
+
+		/**
+		 * Filter whether a clean Transaction defense verdict overrides a low
+		 * reCAPTCHA score. Return false to restore the pre-2.28.0 behaviour,
+		 * where the score blocked the submission on its own.
+		 *
+		 * @param bool   $admit     Whether to admit the submission.
+		 * @param float  $risk      transactionRisk from the fraud assessment.
+		 * @param float  $threshold The configured blocking threshold.
+		 * @param string $context   Threshold context, e.g. 'checkout'.
+		 */
+		if ( ! apply_filters( 'gswp_defer_score_to_fraud_verdict', true, $risk, $threshold, $this->last_context ) ) {
+			return false;
+		}
+
+		$this->log(
+			sprintf(
+				'reCAPTCHA score %.2f is below the %s threshold, but Transaction defense scored this payment at risk %.2f (below the %.2f blocking threshold). Admitted: the fraud model judges the payment, the score judges the browser. assessment=%s',
+				null === $this->last_score ? 0.0 : $this->last_score,
+				$this->last_context,
+				$risk,
+				$threshold,
+				'' !== $this->last_assessment_name ? $this->last_assessment_name : 'none'
+			)
+		);
+
+		return true;
 	}
 
 	/**

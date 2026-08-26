@@ -1119,12 +1119,15 @@ class GSWP_Provider_Gravity_Forms implements GSWP_Form_Provider {
 				$score     = $this->verifier->get_last_score();
 				$threshold = floatval( get_option( 'gswp_threshold_' . $context, '0.5' ) );
 
-				if ( null !== $score && $score < $threshold ) {
+				// A cleared Transaction defense verdict outranks the score on a
+				// payment form for the same reason it does at checkout. See
+				// GSWP_Verifier::fraud_verdict_admits_low_score().
+				if ( null !== $score && $score < $threshold && ! $this->verifier->fraud_verdict_admits_low_score() ) {
 					$this->record_rejection( $form_id, 'low score' );
 
 					return $this->reject(
 						$validation_result,
-						__( 'Verification score too low. Submission rejected as potential spam.', 'google-security-for-wordpress' ),
+						__( 'This submission did not pass our automated security check. Please refresh the page and try again, or contact us if the problem continues.', 'google-security-for-wordpress' ),
 						$form_id
 					);
 				}
