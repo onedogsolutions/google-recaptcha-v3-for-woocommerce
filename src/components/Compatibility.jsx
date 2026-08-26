@@ -1,4 +1,86 @@
-import { __ } from '@wordpress/i18n';
+import { useState } from '@wordpress/element';
+import { __, sprintf } from '@wordpress/i18n';
+import apiFetch from '@wordpress/api-fetch';
+
+function CdnToggle( {
+	provider,
+	label,
+	enabled,
+	ranges,
+	refreshing,
+	onChange,
+	onRefresh,
+	countRanges,
+	lastRefresh,
+} ) {
+	const counts = countRanges( ranges );
+	const hasRanges = counts.total > 0;
+
+	return (
+		<div className="flex flex-col gap-y-2 sm:flex-row sm:items-start sm:justify-between sm:gap-x-6 rounded-lg border border-gray-200 p-4">
+			<div className="flex-1">
+				<div className="flex items-center gap-x-3">
+					<button
+						type="button"
+						aria-label={ label }
+						className={ `relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:ring-offset-2 ${
+							enabled ? 'bg-indigo-600' : 'bg-gray-200'
+						}` }
+						onClick={ () =>
+							onChange(
+								`trusted_${ provider }`,
+								enabled ? '0' : '1'
+							)
+						}
+					>
+						<span
+							aria-hidden="true"
+							className={ `pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+								enabled ? 'translate-x-5' : 'translate-x-0'
+							}` }
+						/>
+					</button>
+					<span className="text-sm font-medium text-gray-900">
+						{ label }
+					</span>
+				</div>
+				<p className="mt-2 text-xs text-gray-500">
+					{ hasRanges
+						? sprintf(
+								/* translators: 1: number of IPv4 ranges, 2: number of IPv6 ranges, 3: last refresh timestamp */
+								__(
+									'%1$d IPv4 ranges and %2$d IPv6 ranges loaded. Last refreshed %3$s.',
+									'google-security-for-wordpress'
+								),
+								counts.ipv4,
+								counts.ipv6,
+								lastRefresh ||
+									__(
+										'never',
+										'google-security-for-wordpress'
+									)
+						  )
+						: __(
+								'No ranges loaded yet. They will be fetched when you save with this toggle on.',
+								'google-security-for-wordpress'
+						  ) }
+				</p>
+			</div>
+			{ enabled && (
+				<button
+					type="button"
+					disabled={ refreshing }
+					onClick={ () => onRefresh( provider ) }
+					className="mt-2 inline-flex items-center rounded-md bg-white px-3 py-2 text-xs font-semibold text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50 disabled:opacity-50 sm:mt-0"
+				>
+					{ refreshing
+						? __( 'Refreshing…', 'google-security-for-wordpress' )
+						: __( 'Refresh now', 'google-security-for-wordpress' ) }
+				</button>
+			) }
+		</div>
+	);
+}
 
 export default function Compatibility( { settings, onChange } ) {
 	const mode =
@@ -45,6 +127,68 @@ export default function Compatibility( { settings, onChange } ) {
 	const conflict = adminData.loaderConflict || null;
 	const suppressing = !! ( conflict && conflict.suppressing );
 	const ourKey = adminData.ourSiteKeyMasked || '';
+
+	const [ refreshing, setRefreshing ] = useState( {} );
+
+	const cloudflareEnabled =
+		settings.trusted_cloudflare === '1' ||
+		settings.trusted_cloudflare === true;
+	const quiccloudEnabled =
+		settings.trusted_quiccloud === '1' ||
+		settings.trusted_quiccloud === true;
+	const bothCdnsEnabled = cloudflareEnabled && quiccloudEnabled;
+
+	const countRanges = ( rangesString ) => {
+		if ( ! rangesString || typeof rangesString !== 'string' ) {
+			return { ipv4: 0, ipv6: 0, total: 0 };
+		}
+		const ipv4 = rangesString
+			.split( /[\s,]+/ )
+			.filter( ( entry ) => entry && ! entry.includes( ':' ) ).length;
+		const ipv6 = rangesString
+			.split( /[\s,]+/ )
+			.filter( ( entry ) => entry && entry.includes( ':' ) ).length;
+		return { ipv4, ipv6, total: ipv4 + ipv6 };
+	};
+
+	const refreshCdn = ( provider ) => {
+		setRefreshing( ( prev ) => ( { ...prev, [ provider ]: true } ) );
+
+		apiFetch( {
+			path: '/gswp/v1/refresh-cdn-ips',
+			method: 'POST',
+			data: { provider },
+		} )
+			.then( ( data ) => {
+				const result = data[ provider ] || {};
+				if ( result.success ) {
+					window.location.reload();
+				} else {
+					// eslint-disable-next-line no-alert
+					window.alert(
+						__(
+							'Could not refresh CDN ranges. Using bundled fallback list until the next scheduled update.',
+							'google-security-for-wordpress'
+						)
+					);
+				}
+			} )
+			.catch( () => {
+				// eslint-disable-next-line no-alert
+				window.alert(
+					__(
+						'Could not refresh CDN ranges. Using bundled fallback list until the next scheduled update.',
+						'google-security-for-wordpress'
+					)
+				);
+			} )
+			.finally( () => {
+				setRefreshing( ( prev ) => ( {
+					...prev,
+					[ provider ]: false,
+				} ) );
+			} );
+	};
 
 	const modes = [
 		{
@@ -336,6 +480,61 @@ export default function Compatibility( { settings, onChange } ) {
 								'google-security-for-wordpress'
 							) }
 						</p>
+						{ bothCdnsEnabled && (
+							<p className="mt-2 text-sm text-amber-700 bg-amber-50 rounded-md p-2">
+								{ __(
+									'Both Cloudflare and QUIC.cloud are trusted. Keep this header set to X-Forwarded-For so the resolver can walk through both CDN hops in the forwarded chain.',
+									'google-security-for-wordpress'
+								) }
+							</p>
+						) }
+					</div>
+
+					{ /* Known CDN proxies */ }
+					<div className="mt-6">
+						<h4 className="text-sm font-semibold text-gray-900">
+							{ __(
+								'Known CDN proxies',
+								'google-security-for-wordpress'
+							) }
+						</h4>
+						<p className="mt-1 text-sm text-gray-500">
+							{ __(
+								'Automatically trust the published edge addresses for these CDNs. The lists refresh daily in the background and can be refreshed manually below.',
+								'google-security-for-wordpress'
+							) }
+						</p>
+
+						<div className="mt-4 space-y-4">
+							<CdnToggle
+								provider="cloudflare"
+								label={ __(
+									'Trust Cloudflare edge addresses',
+									'google-security-for-wordpress'
+								) }
+								enabled={ cloudflareEnabled }
+								ranges={ settings.cdn_ips_cloudflare || '' }
+								refreshing={ refreshing.cloudflare }
+								onChange={ onChange }
+								onRefresh={ refreshCdn }
+								countRanges={ countRanges }
+								lastRefresh={ settings.cdn_last_refresh || '' }
+							/>
+							<CdnToggle
+								provider="quiccloud"
+								label={ __(
+									'Trust QUIC.cloud edge addresses',
+									'google-security-for-wordpress'
+								) }
+								enabled={ quiccloudEnabled }
+								ranges={ settings.cdn_ips_quiccloud || '' }
+								refreshing={ refreshing.quiccloud }
+								onChange={ onChange }
+								onRefresh={ refreshCdn }
+								countRanges={ countRanges }
+								lastRefresh={ settings.cdn_last_refresh || '' }
+							/>
+						</div>
 					</div>
 				</div>
 

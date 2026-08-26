@@ -2,11 +2,13 @@
 
 ## Release state
 
-**`main` is at v2.29.0**, which closes the two items v2.28.0 left open: the client IP sent to Google is now resolved through a declared trusted-proxy chain instead of being `REMOTE_ADDR` unconditionally, and a checkout no longer submits a reCAPTCHA token that went stale while the page was hidden. Both are Phase 58 work; the phase is complete.
+**`main` is at v2.30.0**, which adds one-click toggles to trust the published edge addresses of Cloudflare and QUIC.cloud. Those ranges are fetched from each provider's public endpoint, refreshed daily via WordPress cron, and merged with any manually-declared trusted proxies at resolution time. Both CDNs can be enabled together for sites that pass traffic through both in series. This is Phase 59 work; the phase is complete.
 
-**`main` therefore carries TWO unreleased-until-now versions at once**, v2.28.0 and v2.29.0, merged together at the operator's explicit request. They are independent — different files, different failure modes, each separately revertable — but a site upgrading from v2.27.3 takes all of it. If something breaks after this upgrade, establish which surface first: **2.28.0 is checkout admission policy** (a low bot score no longer blocks a payment the fraud model cleared), **2.29.0 part one is the visitor IP** sent on every assessment (inert until trusted proxies are configured — an empty list behaves exactly as before), and **2.29.0 part two is checkout token refresh**, which touches the inline bootstrap on every form the plugin fills, not only checkout.
+**`main` also carries the v2.29.0 work** that closes the two items v2.28.0 left open: the client IP sent to Google is now resolved through a declared trusted-proxy chain instead of being `REMOTE_ADDR` unconditionally, and a checkout no longer submits a reCAPTCHA token that went stale while the page was hidden. Both are Phase 58 work; that phase is also complete.
 
-**Neither version has been validated on a live site.** The evidence is unusually thorough for stub evidence — 71 assertions across three harnesses, plus a real `npm run build`, a clean `wp-scripts lint-js`, and a jsdom render pass on the new admin tab — but every one of them fakes WordPress. Nothing here has met WooCommerce, a browser at a real checkout, or a proxy. A testing ZIP was built from this merge and delivered to the operator; it has not been installed anywhere.
+**`main` therefore carries THREE unreleased-until-now versions at once**, v2.28.0, v2.29.0 and v2.30.0, merged together at the operator's explicit request. They are independent — different files, different failure modes, each separately revertable — but a site upgrading from v2.27.3 takes all of them. If something breaks after this upgrade, establish which surface first: **2.28.0 is checkout admission policy** (a low bot score no longer blocks a payment the fraud model cleared), **2.29.0 part one is the visitor IP** sent on every assessment (inert until trusted proxies are configured — an empty list behaves exactly as before), **2.29.0 part two is checkout token refresh**, which touches the inline bootstrap on every form the plugin fills, not only checkout, and **2.30.0 is the CDN proxy toggles** that auto-populate trusted proxy ranges for Cloudflare and QUIC.cloud.
+
+**None of these versions has been validated on a live site.** The evidence is unusually thorough for stub evidence — assertions across multiple harnesses, plus a real `npm run build`, a clean `wp-scripts lint-js`, and a jsdom render pass on the new admin tab — but every one of them fakes WordPress. Nothing here has met WooCommerce, a browser at a real checkout, or a proxy. A testing ZIP was built from this merge and delivered to the operator; it has not been installed anywhere.
 
 **The staging checks that actually settle this, in priority order:**
 
@@ -15,6 +17,10 @@
 3. **A real save round-trip of the new Visitor IP fields** through the settings tab, then confirm the readout reports the right one of its three states (`tests/manual/31`).
 4. **On a proxied site only:** configure the proxy, then compare an assessment's `userIpAddress` in Cloud Logging against the same order's customer IP in WooCommerce. They should now agree.
 5. **A carding-shaped submission is still refused** — low score AND high `transactionRisk`. The one regression that would matter most, and the hardest to stage; the harness covers the decision, not the wiring.
+6. **A site behind Cloudflare:** enable the Cloudflare toggle, save, and compare the assessment's `userIpAddress` in Cloud Logging against the visitor's real IP. They should agree when `CF-Connecting-IP` or `X-Forwarded-For` is selected.
+7. **A site behind QUIC.cloud:** enable the QUIC.cloud toggle, save, and compare the assessment's `userIpAddress` against the visitor's real IP. They should agree when `X-Forwarded-For` is selected.
+8. **A site behind both Cloudflare and QUIC.cloud in series:** enable both toggles, keep the header set to `X-Forwarded-For`, and confirm the resolved IP is the visitor, not either CDN edge.
+9. **CDN range refresh:** after a provider changes its published list, confirm the scheduled daily refresh (or a manual click of "Refresh now") updates the stored ranges and the count shown in the UI.
 
 **v2.28.0 is the release before that**, which stops the reCAPTCHA bot score from refusing a payment that reCAPTCHA's own fraud model has already cleared, and stops the plugin telling a paying customer he looks like spam. It exists because of a field incident on 2026-08-26, recorded in full in Phase 58. **v2.28.0 has NOT been validated on a live site** — the evidence behind it is `php -l`, an 11-assertion stub harness that replays the incident's actual assessment values, and `tests/manual/30-checkout-score-vs-risk.php`, which has not been run against a WordPress install.
 
@@ -48,7 +54,40 @@ It was numbered Phase 49 on its branch, which collided with the already-released
 
 *(An earlier revision of this section claimed `main` had been stranded at v2.16.0 for thirteen releases and was missing the 2.17.0 checkout bypass fix. That was wrong. It was read from a remote-tracking ref that had not been fetched since the session began, so `origin/main` pointed at a long-superseded commit. `git push` reported the real one. Recorded rather than quietly deleted because the failure mode is worth keeping: **a stale `origin/*` ref reads exactly like a real branch, and a claim about repository state is only as current as the last fetch.** Fetch before asserting.)*
 
-## Current Phase: Phase 58 (Transaction defense verdict outranks the bot score)
+## Current Phase: Phase 59 (CDN proxy toggles for Cloudflare and QUIC.cloud)
+
+### Phase 59 Modifications (v2.30.0)
+
+**Problem.** The v2.29.0 trusted-proxy resolver works, but it still asks the operator to find and maintain the IP ranges of their CDN. That is reasonable for a one-off proxy, but Cloudflare and QUIC.cloud publish large, changing edge lists. A site using either CDN currently has to paste those ranges into `gswp_trusted_proxies` by hand, and the list drifts out of date as the CDN adds or removes POPs. For sites behind both Cloudflare and QUIC.cloud in series, both lists are needed, and the manual approach is even more brittle.
+
+**Decision:** add admin toggles for the two most common CDNs this operator sees. When a toggle is on, the plugin fetches that provider's published edge IP list, stores it locally, validates every entry, and merges the resulting ranges with the manually-declared trusted proxies at resolution time. The lists refresh daily via WordPress cron. A manual refresh button on the settings page lets an operator force an immediate update. If a fetch fails, the existing stored list is kept; if there is no stored list yet, a bundled fallback snapshot is seeded so the toggle still provides coverage from the first save.
+
+**Security shape.** The fetched ranges are treated exactly like manually-declared proxies: they are only consulted when `REMOTE_ADDR` is itself one of them, and the forwarded chain is still walked from the right. A client cannot forge their way past this any more than they could with a manually-entered range. The `cdn_ips_*` options are read-only for REST clients; only the cron routine and the on-demand refresh endpoint can write them.
+
+**Both CDNs in series.** Cloudflare populates `CF-Connecting-IP` while QUIC.cloud uses `X-Forwarded-For`. When both CDNs are trusted, the settings UI warns the operator to keep the header set to `X-Forwarded-For`: the chain will contain both CDN hops, and the existing right-to-left walker will skip both trusted ranges and return the first untrusted address — the visitor.
+
+**Changes:**
+
+- `includes/class-gswp-client-ip.php`:
+  - Added `CDN_PROVIDERS` metadata, `CDN_REFRESH_HOOK`, and bundled fallback ranges for Cloudflare and QUIC.cloud.
+  - `trusted_proxies()` now merges enabled CDN ranges with the manual list, validates every entry, and de-duplicates.
+  - Added `cdn_enabled()`, `cdn_ranges()`, `count_cdn_ranges()`, `refresh_cdn_ips()`, `default_cdn_ranges()`, `schedule_cdn_refresh()` and `unschedule_cdn_refresh()`.
+  - Cloudflare is fetched from `https://api.cloudflare.com/client/v4/ips` as JSON; QUIC.cloud is fetched from `https://quic.cloud/ips` as plain text. ETag is used to skip unchanged Cloudflare responses.
+- `includes/class-gswp-rest-api.php`:
+  - Added `trusted_cloudflare`, `trusted_quiccloud`, `cdn_ips_cloudflare`, `cdn_ips_quiccloud` and `cdn_last_refresh` to settings.
+  - `update_settings()` treats the two CDN toggles as booleans and triggers an immediate refresh when a toggle flips from off to on.
+  - Added `POST /gswp/v1/refresh-cdn-ips` for on-demand refresh.
+- `includes/class-gswp-admin.php`: bootstraps the new CDN fields into the React app's initial state.
+- `google-security-for-wordpress.php`: added default options, schedules the daily cron on `init`, wires the cron hook, and clears it on deactivation.
+- `src/components/Compatibility.jsx`: added a "Known CDN proxies" section with toggles, range counts, last-refresh timestamp and a manual refresh button; shows a notice when both CDNs are enabled recommending `X-Forwarded-For`.
+- `src/components/App.jsx`: added the new CDN settings to initial state.
+- `readme.txt`: stable tag and changelog updated to v2.30.0.
+
+**Evidence, stated plainly:** `php -l` on every touched PHP file; `npm run build` succeeds; `wp-scripts lint-js` is clean on the changed components. No WordPress, no browser, no live site. The staging checks that settle this are: a site behind Cloudflare with the toggle on, verifying the assessment's `userIpAddress` matches the real visitor IP; a site behind QUIC.cloud doing the same; a site behind both Cloudflare and QUIC.cloud in series with both toggles on and `X-Forwarded-For` selected; and confirming the cron refresh updates the stored ranges when a provider changes its published list.
+
+**Packaged.** A distribution ZIP was assembled from `google-security-for-wordpress.php`, `readme.txt`, `includes/`, `assets/` and `build/` (regenerated by `npm run build` before packaging), rooted at a `google-security-for-wordpress/` folder and excluding `.DS_Store` files.
+
+## Historical Phase: Phase 58 (Transaction defense verdict outranks the bot score)
 
 ### Phase 58 Modifications (v2.28.0)
 

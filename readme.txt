@@ -4,7 +4,7 @@ Tags: recaptcha, woocommerce, two-factor, 2fa, security
 Requires at least: 5.8
 Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 2.29.0
+Stable tag: 2.30.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -86,6 +86,12 @@ Point integrations at a dedicated machine account and exempt only that account, 
 7. **Operate**: one named application password per tool per site; review "Last Used" periodically; rotate on a schedule; on any incident, revoke that single password (or delete the service account) without disrupting anyone's normal access.
 
 == Changelog ==
+
+= 2.30.0 =
+* Added: one-click toggles to trust the published edge addresses of Cloudflare and QUIC.cloud. When enabled, the plugin fetches each CDN's current IP list, stores it locally, and merges those ranges with any manually-declared trusted proxies. Lists refresh daily via WordPress cron and can be refreshed manually from the settings screen.
+* Added: bundled fallback ranges for Cloudflare and QUIC.cloud, used when a provider's public endpoint cannot be reached the first time a toggle is enabled, so coverage begins immediately.
+* Added: a "Known CDN proxies" section on the Alerts & Compatibility tab with toggles for Cloudflare and QUIC.cloud, loaded range counts, last refresh timestamp, and a manual refresh button.
+* Improved: sites that pass traffic through both Cloudflare and QUIC.cloud in series can enable both toggles together. The existing right-to-left forwarded-chain walker skips both trusted hops and resolves the real visitor address when X-Forwarded-For is used.
 
 = 2.29.0 =
 * Fixed: on a site behind a CDN or reverse proxy, every reCAPTCHA assessment reported the proxy's address as the visitor's. The plugin read `REMOTE_ADDR` and nothing else, so a QUIC.cloud, Cloudflare or load-balanced site sent Google one datacenter address for every visitor — depressing scores site-wide, teaching Account Defender that the whole site shares one network, and putting the wrong address in security alert emails. A new trusted-proxy resolver reads the forwarded client address, but **only** when the request actually arrived from a proxy the operator has declared, and only by walking the forwarded chain from the end nearest the server. Any client can send `X-Forwarded-For`, so trusting it unconditionally would let an attacker launder a bad score by claiming a clean address; that is why the old code read `REMOTE_ADDR`, and why the default is an empty trusted list. Nothing changes on upgrade until proxies are configured in the new `gswp_trusted_proxies` option (or the filter of the same name), and `gswp_client_ip_header` selects the header for Cloudflare and Akamai style setups.

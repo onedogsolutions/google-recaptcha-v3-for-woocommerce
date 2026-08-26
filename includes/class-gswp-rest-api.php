@@ -50,6 +50,16 @@ class GSWP_Rest_Api {
 				'permission_callback' => array( $this, 'check_permissions' ),
 			)
 		);
+
+		register_rest_route(
+			'gswp/v1',
+			'/refresh-cdn-ips',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'refresh_cdn_ips' ),
+				'permission_callback' => array( $this, 'check_permissions' ),
+			)
+		);
 	}
 
 	/**
@@ -97,6 +107,11 @@ class GSWP_Rest_Api {
 			'verbose_logging'        => get_option( 'gswp_verbose_logging', '0' ),
 			'trusted_proxies'        => get_option( 'gswp_trusted_proxies', '' ),
 			'client_ip_header'       => get_option( 'gswp_client_ip_header', 'X-Forwarded-For' ),
+			'trusted_cloudflare'     => get_option( 'gswp_trusted_cloudflare', '0' ),
+			'trusted_quiccloud'      => get_option( 'gswp_trusted_quiccloud', '0' ),
+			'cdn_ips_cloudflare'     => get_option( 'gswp_cdn_ips_cloudflare', '' ),
+			'cdn_ips_quiccloud'      => get_option( 'gswp_cdn_ips_quiccloud', '' ),
+			'cdn_last_refresh'       => get_option( 'gswp_cdn_last_refresh', '' ),
 			'resolved_client_ip'     => GSWP_Client_IP::get(),
 			'remote_addr'            => GSWP_Client_IP::remote_addr(),
 			'enable_wp_login'        => get_option( 'gswp_enable_wp_login', '0' ),
@@ -179,6 +194,30 @@ class GSWP_Rest_Api {
 			'loader_conflicts' => $this->diagnose_loader_conflicts(),
 			'form_coverage' => $this->diagnose_form_coverage(),
 		);
+
+		return new WP_REST_Response( $results, 200 );
+	}
+
+	/**
+	 * Refresh CDN edge IP lists on demand.
+	 *
+	 * @param WP_REST_Request $request The REST request.
+	 * @return WP_REST_Response Result of the refresh.
+	 */
+	public function refresh_cdn_ips( $request ) {
+		$provider = sanitize_key( (string) $request->get_param( 'provider' ) );
+
+		if ( '' !== $provider && ! isset( GSWP_Client_IP::CDN_PROVIDERS[ $provider ] ) ) {
+			return new WP_REST_Response(
+				array(
+					'success' => false,
+					'message' => __( 'Unknown CDN provider.', 'google-security-for-wordpress' ),
+				),
+				400
+			);
+		}
+
+		$results = GSWP_Client_IP::refresh_cdn_ips( $provider );
 
 		return new WP_REST_Response( $results, 200 );
 	}
@@ -860,10 +899,31 @@ class GSWP_Rest_Api {
 			'pd_block_choice',
 			'pd_force_reset',
 			'alert_leak',
+			'trusted_cloudflare',
+			'trusted_quiccloud',
 		);
+		// Remember CDN toggle states before updating so a 0 -> 1 transition can
+		// trigger an immediate IP-list refresh.
+		$cdn_toggles = array(
+			'cloudflare' => '1' === (string) get_option( 'gswp_trusted_cloudflare', '0' ),
+			'quiccloud'  => '1' === (string) get_option( 'gswp_trusted_quiccloud', '0' ),
+		);
+
 		foreach ( $toggles as $toggle ) {
 			if ( isset( $params[ $toggle ] ) ) {
 				update_option( 'gswp_' . $toggle, $params[ $toggle ] ? '1' : '0' );
+			}
+		}
+
+		// When a CDN toggle is turned on, refresh its edge IP list immediately
+		// so the operator sees coverage right away instead of waiting for cron.
+		foreach ( $cdn_toggles as $provider => $was_on ) {
+			$param   = 'trusted_' . $provider;
+			$now_on  = isset( $params[ $param ] ) && $params[ $param ];
+			$flipped = ! $was_on && $now_on;
+
+			if ( $flipped ) {
+				GSWP_Client_IP::refresh_cdn_ips( $provider );
 			}
 		}
 

@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Google Security for WordPress
  * Description: A Google-powered security suite for WordPress: reCAPTCHA v3 scoring on the WordPress and WooCommerce login, registration, lost password, and checkout forms, plus two-factor authentication (TOTP) compatible with Google Authenticator. Works with or without WooCommerce.
- * Version: 2.29.0
+ * Version: 2.30.0
  * Author: One Dog Solutions
  * Author URI: https://onedog.solutions/
  * Requires at least: 5.8
@@ -47,7 +47,7 @@ if ( version_compare( $wp_version, '5.8', '<' ) ) {
 }
 
 // Define plugin constants.
-define( 'GSWP_VERSION', '2.29.0' );
+define( 'GSWP_VERSION', '2.30.0' );
 define( 'GSWP_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'GSWP_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'GSWP_FILE', __FILE__ );
@@ -158,6 +158,13 @@ function gswp_default_options() {
 		'txn_defense'               => '0',
 		'txn_block'                 => '0',
 		'threshold_txn'             => '0.8',
+		// Known CDN edge-address toggles and cached ranges.
+		'trusted_cloudflare'        => '0',
+		'trusted_quiccloud'         => '0',
+		'cdn_ips_cloudflare'        => '',
+		'cdn_ips_quiccloud'         => '',
+		'cdn_etag_cloudflare'       => '',
+		'cdn_last_refresh'          => '',
 		// reCAPTCHA Enterprise Account Defender.
 		'account_defender'          => '0',
 		'ad_step_up'                => '0',
@@ -256,6 +263,7 @@ register_activation_hook( __FILE__, 'gswp_activate' );
  */
 function gswp_deactivate() {
 	wp_clear_scheduled_hook( 'gswp_alerts_digest_event' );
+	GSWP_Client_IP::unschedule_cdn_refresh();
 }
 register_deactivation_hook( __FILE__, 'gswp_deactivate' );
 
@@ -445,6 +453,12 @@ function gswp_backfill_2fa_origin() {
 		update_user_meta( $user_id, GSWP_Two_Factor::META_ORIGIN, $origin );
 	}
 }
+
+/**
+ * Initialize the plugin classes.
+ */
+add_action( 'init', array( 'GSWP_Client_IP', 'schedule_cdn_refresh' ) );
+add_action( GSWP_Client_IP::CDN_REFRESH_HOOK, array( 'GSWP_Client_IP', 'refresh_cdn_ips' ) );
 
 /**
  * Initialize the plugin classes.

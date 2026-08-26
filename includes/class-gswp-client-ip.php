@@ -70,6 +70,34 @@ class GSWP_Client_IP {
 	);
 
 	/**
+	 * Known CDN providers whose edge IP lists can be trusted automatically.
+	 *
+	 * Each provider has an option that stores fetched ranges and a toggle
+	 * option that decides whether those ranges are merged into the trusted
+	 * proxy list at resolution time.
+	 *
+	 * @var array
+	 */
+	const CDN_PROVIDERS = array(
+		'cloudflare' => array(
+			'option' => 'gswp_cdn_ips_cloudflare',
+			'toggle' => 'gswp_trusted_cloudflare',
+			'url'    => 'https://api.cloudflare.com/client/v4/ips',
+			'etag'   => 'gswp_cdn_etag_cloudflare',
+		),
+		'quiccloud'  => array(
+			'option' => 'gswp_cdn_ips_quiccloud',
+			'toggle' => 'gswp_trusted_quiccloud',
+			'url'    => 'https://quic.cloud/ips',
+		),
+	);
+
+	/**
+	 * WordPress cron hook used to refresh CDN IP lists.
+	 */
+	const CDN_REFRESH_HOOK = 'gswp_refresh_cdn_ips';
+
+	/**
 	 * The visitor's IP address.
 	 *
 	 * @param string $fallback Returned when REMOTE_ADDR is absent or unusable —
@@ -179,6 +207,11 @@ class GSWP_Client_IP {
 	/**
 	 * Trusted proxy addresses and CIDR ranges.
 	 *
+	 * Returns the manually-declared list plus any ranges fetched for enabled
+	 * CDN providers. CDN ranges are validated and de-duplicated with the manual
+	 * list so a stale or malformed entry from an upstream source cannot break
+	 * resolution.
+	 *
 	 * @return array
 	 */
 	public static function trusted_proxies() {
@@ -197,7 +230,466 @@ class GSWP_Client_IP {
 		 */
 		$entries = (array) apply_filters( 'gswp_trusted_proxies', $entries );
 
-		return array_values( array_filter( array_map( 'trim', $entries ), 'strlen' ) );
+		foreach ( array_keys( self::CDN_PROVIDERS ) as $provider ) {
+			if ( self::cdn_enabled( $provider ) ) {
+				$entries = array_merge( $entries, self::cdn_ranges( $provider ) );
+			}
+		}
+
+		$entries = array_map( 'trim', $entries );
+		$entries = array_filter( $entries, 'strlen' );
+		$entries = array_unique( $entries );
+
+		return array_values( $entries );
+	}
+
+	/**
+	 * Whether a CDN provider toggle is enabled.
+	 *
+	 * @param string $provider Provider key (cloudflare|quiccloud).
+	 * @return bool
+	 */
+	public static function cdn_enabled( $provider ) {
+		$config = isset( self::CDN_PROVIDERS[ $provider ] ) ? self::CDN_PROVIDERS[ $provider ] : null;
+
+		if ( ! $config ) {
+			return false;
+		}
+
+		return '1' === (string) get_option( $config['toggle'], '0' );
+	}
+
+	/**
+	 * Validated ranges stored for a CDN provider.
+	 *
+	 * @param string $provider Provider key (cloudflare|quiccloud).
+	 * @return array
+	 */
+	public static function cdn_ranges( $provider ) {
+		$config = isset( self::CDN_PROVIDERS[ $provider ] ) ? self::CDN_PROVIDERS[ $provider ] : null;
+
+		if ( ! $config ) {
+			return array();
+		}
+
+		$stored = (string) get_option( $config['option'], '' );
+		if ( '' === $stored ) {
+			return array();
+		}
+
+		$ranges = array();
+		foreach ( preg_split( '/[\s,]+/', $stored, -1, PREG_SPLIT_NO_EMPTY ) as $entry ) {
+			$entry = trim( (string) $entry );
+			if ( self::is_valid_range( $entry ) ) {
+				$ranges[] = $entry;
+			}
+		}
+
+		return $ranges;
+	}
+
+	/**
+	 * Count stored ranges for a CDN provider, split by address family.
+	 *
+	 * @param string $provider Provider key (cloudflare|quiccloud).
+	 * @return array Array with 'ipv4', 'ipv6' and 'total' counts.
+	 */
+	public static function count_cdn_ranges( $provider ) {
+		$ipv4 = 0;
+		$ipv6 = 0;
+
+		foreach ( self::cdn_ranges( $provider ) as $range ) {
+			if ( false !== strpos( $range, ':' ) ) {
+				++$ipv6;
+			} else {
+				++$ipv4;
+			}
+		}
+
+		return array(
+			'ipv4'  => $ipv4,
+			'ipv6'  => $ipv6,
+			'total' => $ipv4 + $ipv6,
+		);
+	}
+
+	/**
+	 * Refresh CDN edge IP lists from their public endpoints.
+	 *
+	 * @param string $provider Provider key (cloudflare|quiccloud) or empty to refresh all enabled providers.
+	 * @return array Result per provider with 'success', 'count' and 'message'.
+	 */
+	public static function refresh_cdn_ips( $provider = '' ) {
+		$providers = array_keys( self::CDN_PROVIDERS );
+		if ( '' !== $provider && ! in_array( $provider, $providers, true ) ) {
+			return array(
+				$provider => array(
+					'success' => false,
+					'count'   => 0,
+					'message' => 'Unknown CDN provider.',
+				),
+			);
+		}
+
+		$targets = '' === $provider ? $providers : array( $provider );
+		$results = array();
+
+		foreach ( $targets as $key ) {
+			$results[ $key ] = self::refresh_provider_ips( $key );
+		}
+
+		$any_success = false;
+		foreach ( $results as $result ) {
+			if ( $result['success'] ) {
+				$any_success = true;
+				break;
+			}
+		}
+
+		if ( $any_success ) {
+			update_option( 'gswp_cdn_last_refresh', gmdate( 'Y-m-d H:i:s' ) . ' UTC' );
+		}
+
+		return $results;
+	}
+
+	/**
+	 * Refresh a single provider's IP list.
+	 *
+	 * @param string $provider Provider key.
+	 * @return array Result with 'success', 'count' and 'message'.
+	 */
+	private static function refresh_provider_ips( $provider ) {
+		$config = self::CDN_PROVIDERS[ $provider ];
+
+		$response = wp_remote_get(
+			$config['url'],
+			array(
+				'timeout' => 15,
+				'headers' => array(
+					'User-Agent' => 'Google Security for WordPress/' . GSWP_VERSION . '; ' . get_bloginfo( 'url' ),
+				),
+			)
+		);
+
+		if ( is_wp_error( $response ) ) {
+			self::maybe_seed_fallback( $provider );
+			return array(
+				'success' => false,
+				'count'   => count( self::cdn_ranges( $provider ) ),
+				'message' => $response->get_error_message(),
+			);
+		}
+
+		$status = wp_remote_retrieve_response_code( $response );
+		$body   = wp_remote_retrieve_body( $response );
+
+		if ( 200 !== $status || '' === $body ) {
+			self::maybe_seed_fallback( $provider );
+			return array(
+				'success' => false,
+				'count'   => count( self::cdn_ranges( $provider ) ),
+				'message' => 'HTTP ' . $status . ' or empty response.',
+			);
+		}
+
+		$ranges = array();
+
+		if ( 'cloudflare' === $provider ) {
+			$json = json_decode( $body, true );
+
+			if ( ! is_array( $json ) || empty( $json['success'] ) || ! isset( $json['result'] ) ) {
+				self::maybe_seed_fallback( $provider );
+				return array(
+					'success' => false,
+					'count'   => count( self::cdn_ranges( $provider ) ),
+					'message' => 'Unexpected response format.',
+				);
+			}
+
+			$etag = isset( $json['result']['etag'] ) ? sanitize_text_field( $json['result']['etag'] ) : '';
+			if ( '' !== $etag && $etag === get_option( $config['etag'], '' ) ) {
+				return array(
+					'success' => true,
+					'count'   => count( self::cdn_ranges( $provider ) ),
+					'message' => 'No change since last refresh.',
+				);
+			}
+
+			$ipv4 = isset( $json['result']['ipv4_cidrs'] ) ? (array) $json['result']['ipv4_cidrs'] : array();
+			$ipv6 = isset( $json['result']['ipv6_cidrs'] ) ? (array) $json['result']['ipv6_cidrs'] : array();
+			$ranges = array_merge( $ipv4, $ipv6 );
+
+			if ( '' !== $etag ) {
+				update_option( $config['etag'], $etag );
+			}
+		} else {
+			// QUIC.cloud publishes one address or CIDR per line.
+			foreach ( preg_split( '/\r\n|\r|\n/', $body, -1, PREG_SPLIT_NO_EMPTY ) as $line ) {
+				$line = sanitize_text_field( trim( $line ) );
+				if ( '' !== $line ) {
+					$ranges[] = $line;
+				}
+			}
+		}
+
+		$valid = array();
+		foreach ( $ranges as $range ) {
+			if ( self::is_valid_range( $range ) ) {
+				$valid[] = $range;
+			}
+		}
+
+		if ( empty( $valid ) ) {
+			self::maybe_seed_fallback( $provider );
+			return array(
+				'success' => false,
+				'count'   => count( self::cdn_ranges( $provider ) ),
+				'message' => 'No valid ranges found in response.',
+			);
+		}
+
+		$valid = array_values( array_unique( $valid ) );
+		update_option( $config['option'], implode( ', ', $valid ) );
+
+		return array(
+			'success' => true,
+			'count'   => count( $valid ),
+			'message' => 'Refreshed successfully.',
+		);
+	}
+
+	/**
+	 * Seed a provider's stored ranges from the bundled fallback when no stored
+	 * list exists yet.
+	 *
+	 * @param string $provider Provider key.
+	 */
+	private static function maybe_seed_fallback( $provider ) {
+		$config = self::CDN_PROVIDERS[ $provider ];
+
+		if ( '' !== (string) get_option( $config['option'], '' ) ) {
+			return;
+		}
+
+		$fallback = self::default_cdn_ranges( $provider );
+		if ( ! empty( $fallback ) ) {
+			update_option( $config['option'], implode( ', ', $fallback ) );
+		}
+	}
+
+	/**
+	 * Bundled fallback ranges for each supported CDN.
+	 *
+	 * These are used when a provider's public endpoint cannot be reached on the
+	 * first refresh so the toggle still provides coverage immediately.
+	 *
+	 * @param string $provider Provider key.
+	 * @return array
+	 */
+	public static function default_cdn_ranges( $provider ) {
+		if ( 'cloudflare' === $provider ) {
+			return array(
+				'173.245.48.0/20',
+				'103.21.244.0/22',
+				'103.22.200.0/22',
+				'103.31.4.0/22',
+				'141.101.64.0/18',
+				'108.162.192.0/18',
+				'190.93.240.0/20',
+				'188.114.96.0/20',
+				'197.234.240.0/22',
+				'198.41.128.0/17',
+				'162.158.0.0/15',
+				'104.16.0.0/13',
+				'104.24.0.0/14',
+				'172.64.0.0/13',
+				'131.0.72.0/22',
+				'2400:cb00::/32',
+				'2606:4700::/32',
+				'2803:f800::/32',
+				'2405:b500::/32',
+				'2405:8100::/32',
+				'2a06:98c0::/29',
+				'2c0f:f248::/32',
+			);
+		}
+
+		if ( 'quiccloud' === $provider ) {
+			return array(
+				'102.221.36.98',
+				'103.106.229.82',
+				'103.106.229.94',
+				'103.146.63.42',
+				'103.152.118.219',
+				'103.152.118.72',
+				'103.164.203.163',
+				'103.167.151.84',
+				'103.72.163.222',
+				'103.75.117.169',
+				'104.244.77.37',
+				'108.61.158.223',
+				'108.61.200.94',
+				'109.248.43.195',
+				'135.125.104.145',
+				'136.243.106.228',
+				'139.84.230.39',
+				'141.164.38.65',
+				'141.227.158.131',
+				'144.202.90.7',
+				'146.88.239.197',
+				'147.78.0.165',
+				'147.78.3.161',
+				'149.28.136.245',
+				'149.28.47.113',
+				'149.28.85.239',
+				'15.204.231.24',
+				'15.235.180.91',
+				'15.235.181.227',
+				'152.53.162.246',
+				'152.53.167.143',
+				'152.53.168.39',
+				'152.53.169.106',
+				'152.53.36.14',
+				'152.53.38.14',
+				'154.205.144.192',
+				'155.138.221.81',
+				'156.67.218.140',
+				'158.51.123.249',
+				'162.254.117.80',
+				'162.254.118.29',
+				'162.55.9.23',
+				'163.182.174.161',
+				'163.47.21.168',
+				'164.52.202.100',
+				'167.71.185.204',
+				'167.88.61.211',
+				'170.249.218.98',
+				'173.234.26.74',
+				'176.9.114.118',
+				'178.17.171.177',
+				'178.22.124.251',
+				'178.255.220.12',
+				'18.192.146.200',
+				'185.116.60.231',
+				'185.116.60.232',
+				'185.126.237.51',
+				'185.212.169.91',
+				'185.228.26.40',
+				'185.231.233.130',
+				'185.53.57.40',
+				'185.53.57.89',
+				'188.172.228.182',
+				'188.172.229.113',
+				'188.64.184.71',
+				'190.92.176.5',
+				'191.96.101.140',
+				'192.248.156.201',
+				'192.248.191.135',
+				'192.99.38.117',
+				'193.203.191.189',
+				'195.137.220.243',
+				'195.231.17.141',
+				'199.247.28.91',
+				'199.59.247.242',
+				'201.182.97.70',
+				'209.124.84.191',
+				'209.208.26.218',
+				'211.23.143.87',
+				'213.159.1.75',
+				'213.183.48.170',
+				'213.184.85.245',
+				'216.106.177.77',
+				'216.128.179.195',
+				'216.238.104.48',
+				'216.238.71.13',
+				'23.160.56.125',
+				'23.95.72.16',
+				'31.131.4.244',
+				'31.22.115.186',
+				'31.40.212.152',
+				'37.120.163.165',
+				'38.114.121.40',
+				'38.54.30.228',
+				'38.54.79.187',
+				'38.60.253.237',
+				'40.160.225.31',
+				'40.160.241.195',
+				'41.185.29.210',
+				'41.223.52.170',
+				'45.124.65.86',
+				'45.248.77.61',
+				'45.32.123.201',
+				'45.32.183.112',
+				'45.32.203.144',
+				'45.32.67.144',
+				'45.32.77.223',
+				'45.63.67.181',
+				'45.76.252.131',
+				'45.77.148.74',
+				'45.77.165.216',
+				'45.77.51.171',
+				'46.250.220.133',
+				'49.12.102.29',
+				'5.134.119.103',
+				'51.158.202.109',
+				'51.161.196.212',
+				'51.68.143.214',
+				'51.89.11.45',
+				'54.36.103.97',
+				'57.129.146.219',
+				'57.131.30.109',
+				'61.219.247.87',
+				'61.219.247.90',
+				'64.176.165.8',
+				'64.176.4.251',
+				'64.227.16.93',
+				'65.108.104.232',
+				'65.109.39.175',
+				'65.20.76.133',
+				'65.21.81.51',
+				'66.163.114.36',
+				'66.42.124.101',
+				'66.42.75.121',
+				'67.219.99.102',
+				'70.34.206.56',
+				'74.91.25.147',
+				'79.172.239.249',
+				'81.31.156.245',
+				'81.31.156.246',
+				'83.138.12.246',
+				'86.105.14.231',
+				'86.105.14.232',
+				'89.58.38.4',
+				'91.148.135.53',
+				'91.201.67.121',
+				'91.228.7.67',
+				'92.118.205.75',
+				'93.95.231.22',
+				'94.75.232.90',
+				'95.179.145.87',
+				'95.179.245.162',
+				'95.216.116.209',
+			);
+		}
+
+		return array();
+	}
+
+	/**
+	 * Ensure the CDN refresh cron event is scheduled.
+	 */
+	public static function schedule_cdn_refresh() {
+		if ( ! wp_next_scheduled( self::CDN_REFRESH_HOOK ) ) {
+			wp_schedule_event( time(), 'daily', self::CDN_REFRESH_HOOK );
+		}
+	}
+
+	/**
+	 * Clear the CDN refresh cron event.
+	 */
+	public static function unschedule_cdn_refresh() {
+		wp_clear_scheduled_hook( self::CDN_REFRESH_HOOK );
 	}
 
 	/**
